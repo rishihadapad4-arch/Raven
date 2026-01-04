@@ -1,4 +1,3 @@
-
 import { User, Community, Message, Friend } from '../types';
 import { 
   db, storage, 
@@ -11,10 +10,7 @@ export const RAVEN_DB = {
   getUser: async (uid: string): Promise<User | null> => {
     const docRef = doc(db, "users", uid);
     const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return docSnap.data() as User;
-    }
-    return null;
+    return docSnap.exists() ? (docSnap.data() as User) : null;
   },
 
   saveUser: async (user: User) => {
@@ -27,18 +23,16 @@ export const RAVEN_DB = {
   },
 
   uploadAvatar: async (uid: string, base64: string): Promise<string> => {
-    // Standard approach for web apps: upload base64 as data_url to Firebase Storage
     const storageRef = ref(storage, `avatars/${uid}_${Date.now()}`);
     await uploadString(storageRef, base64, 'data_url');
-    const url = await getDownloadURL(storageRef);
-    return url;
+    return await getDownloadURL(storageRef);
   },
 
   // House/Community Management
   getHouses: (callback: (houses: Community[]) => void) => {
     const q = query(collection(db, "houses"));
     return onSnapshot(q, (snapshot) => {
-      const houses = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Community));
+      const houses = snapshot.docs.map(doc => doc.data() as Community);
       callback(houses);
     });
   },
@@ -59,7 +53,7 @@ export const RAVEN_DB = {
       userId,
       joinedAt: Date.now()
     });
-    // Increment member count
+    // Increment member count (simplified)
     const houseRef = doc(db, "houses", houseId);
     const houseSnap = await getDoc(houseRef);
     if (houseSnap.exists()) {

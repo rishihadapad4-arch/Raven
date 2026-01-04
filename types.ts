@@ -1,4 +1,3 @@
-
 export type OperativePosition = 'Commander' | 'Sentinel' | 'Architect' | 'Operative';
 
 export interface User {

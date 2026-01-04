@@ -48,56 +48,50 @@ const App: React.FC = () => {
   const [isMembersVisible, setIsMembersVisible] = useState(true);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
 
   // --- Auth Observer ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setIsLoading(true);
       if (firebaseUser) {
-        setIsLoading(true);
-        try {
-          const userData = await RAVEN_DB.getUser(firebaseUser.uid);
-          if (userData) {
-            setCurrentUser(userData);
-            if (!userData.displayName || !userData.avatar) {
-              setView('setup');
-            } else {
-              setView(prev => (prev === 'landing' || prev === 'auth' || prev === 'setup') ? 'dashboard' : prev);
-            }
-          } else {
-            const newUser: User = {
-              id: firebaseUser.uid,
-              username: firebaseUser.email?.split('@')[0] || 'operative',
-              displayName: firebaseUser.displayName || '',
-              avatar: firebaseUser.photoURL || '',
-              bio: '',
-              joinedAt: Date.now(),
-              createdAt: Date.now(),
-              commsCode: `RAVEN-${Math.floor(1000 + Math.random() * 9000)}`,
-              position: 'Operative',
-              houseIds: [],
-              contactIds: []
-            };
-            await RAVEN_DB.saveUser(newUser);
-            setCurrentUser(newUser);
+        const userData = await RAVEN_DB.getUser(firebaseUser.uid);
+        if (userData) {
+          setCurrentUser(userData);
+          if (!userData.displayName || !userData.avatar) {
             setView('setup');
+          } else {
+            setView('dashboard');
           }
-        } catch (error) {
-          console.error("Auth initialization error:", error);
-        } finally {
-          setIsLoading(false);
+        } else {
+          // New User
+          const newUser: User = {
+            id: firebaseUser.uid,
+            username: firebaseUser.email?.split('@')[0] || 'operative',
+            displayName: '',
+            avatar: '',
+            bio: '',
+            joinedAt: Date.now(),
+            createdAt: Date.now(),
+            commsCode: `RAVEN-${Math.floor(1000 + Math.random() * 9000)}`,
+            position: 'Operative',
+            houseIds: [],
+            contactIds: []
+          };
+          await RAVEN_DB.saveUser(newUser);
+          setCurrentUser(newUser);
+          setView('setup');
         }
       } else {
         setCurrentUser(null);
-        setView(prev => (prev === 'auth' ? 'auth' : 'landing'));
-        setIsLoading(false);
+        setView('landing');
       }
+      setIsLoading(false);
     });
 
     return () => unsubscribe();
-  }, []); // Empty dependency array for stability
+  }, []);
 
-  // --- Real-time Subscriptions ---
+  // --- Real-time Data Subscriptions ---
   useEffect(() => {
     if (currentUser) {
       const unsubscribeHouses = RAVEN_DB.getHouses((data) => setHouses(data));
@@ -120,19 +114,18 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // --- Actions ---
+  // --- Auth Actions ---
 
   const handleGoogleAuth = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      alert("Authentication failed: " + (err as Error).message);
+      alert("Auth failed: " + (err as Error).message);
     }
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) return alert("Email and Password are required.");
     try {
       if (authMode === 'signup') {
         await createUserWithEmailAndPassword(auth, email, password);
@@ -140,7 +133,7 @@ const App: React.FC = () => {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err) {
-      alert("Verification failed: " + (err as Error).message);
+      alert("Auth failed: " + (err as Error).message);
     }
   };
 
@@ -152,7 +145,9 @@ const App: React.FC = () => {
     setActiveDMUser(null);
   };
 
-  const handleProfileSetup = async (e: React.FormEvent<HTMLFormElement>) => {
+  // --- Profile Actions ---
+
+  const handleProfileUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!currentUser) return;
     setIsLoading(true);
@@ -161,64 +156,50 @@ const App: React.FC = () => {
       displayName: formData.get('displayName') as string,
       bio: formData.get('bio') as string,
     };
-    
-    if (!updateData.displayName || !currentUser.avatar) {
-      setIsLoading(false);
-      return alert("Display Name and Profile Picture are mandatory.");
-    }
-
     await RAVEN_DB.updateUserProfile(currentUser.id, updateData);
     setCurrentUser({ ...currentUser, ...updateData });
     setView('dashboard');
     setIsLoading(false);
   };
 
-  const handleEditProfile = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!currentUser) return;
-    setIsLoading(true);
-    const formData = new FormData(e.currentTarget);
-    const updateData = {
-      displayName: formData.get('displayName') as string,
-      bio: formData.get('bio') as string,
-    };
-    await RAVEN_DB.updateUserProfile(currentUser.id, updateData);
-    setCurrentUser({ ...currentUser, ...updateData });
-    setView('profile');
-    setIsLoading(false);
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'avatar' | 'chat') => {
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && currentUser) {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = reader.result as string;
         setIsLoading(true);
-        try {
-          const url = await RAVEN_DB.uploadAvatar(currentUser.id, base64);
-          if (type === 'avatar') {
-            await RAVEN_DB.updateUserProfile(currentUser.id, { avatar: url });
-            setCurrentUser({ ...currentUser, avatar: url });
-          } else if (type === 'chat') {
-            sendImageMessage(url);
-          }
-        } catch (err) {
-          alert("Upload failed: " + (err as Error).message);
-        }
+        const url = await RAVEN_DB.uploadAvatar(currentUser.id, base64);
+        await RAVEN_DB.updateUserProfile(currentUser.id, { avatar: url });
+        setCurrentUser({ ...currentUser, avatar: url });
         setIsLoading(false);
       };
       reader.readAsDataURL(file);
     }
   };
 
+  const handleChatImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && (activeHouse || activeDMUser) && currentUser) {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = reader.result as string;
+        const url = await RAVEN_DB.uploadAvatar(currentUser.id, base64); // reuse upload logic
+        sendImageMessage(url);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // --- App Logic ---
+
   const sendMessage = async (content: string) => {
     if (!currentUser || !content.trim()) return;
-    const channelId = activeHouse ? activeHouse.id : (activeDMUser ? RAVEN_DB.getDMRoomId(currentUser.id, activeDMUser.id) : "");
+    let channelId = activeHouse ? activeHouse.id : (activeDMUser ? RAVEN_DB.getDMRoomId(currentUser.id, activeDMUser.id) : "");
     if (!channelId) return;
 
     const msg: Message = {
-      id: 'm_' + Date.now() + Math.random().toString(36).substr(2, 5),
+      id: 'm_' + Date.now(),
       senderId: currentUser.id,
       senderName: currentUser.displayName,
       senderAvatar: currentUser.avatar,
@@ -231,11 +212,11 @@ const App: React.FC = () => {
 
   const sendImageMessage = async (imageUrl: string) => {
     if (!currentUser) return;
-    const channelId = activeHouse ? activeHouse.id : (activeDMUser ? RAVEN_DB.getDMRoomId(currentUser.id, activeDMUser.id) : "");
+    let channelId = activeHouse ? activeHouse.id : (activeDMUser ? RAVEN_DB.getDMRoomId(currentUser.id, activeDMUser.id) : "");
     if (!channelId) return;
 
     const msg: Message = {
-      id: 'm_' + Date.now() + Math.random().toString(36).substr(2, 5),
+      id: 'm_' + Date.now(),
       senderId: currentUser.id,
       senderName: currentUser.displayName,
       senderAvatar: currentUser.avatar,
@@ -276,7 +257,7 @@ const App: React.FC = () => {
   const joinHouse = async (code: string) => {
     const house = houses.find(h => h.inviteCode === code.trim().toUpperCase());
     if (house && currentUser) {
-      if (currentUser.houseIds.includes(house.id)) return alert("Already a member of this domain.");
+      if (currentUser.houseIds.includes(house.id)) return alert("Already a member.");
       await RAVEN_DB.joinHouse(house.id, currentUser.id);
       const updatedUser = { ...currentUser, houseIds: [...currentUser.houseIds, house.id] };
       setCurrentUser(updatedUser);
@@ -295,7 +276,7 @@ const App: React.FC = () => {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[#050505]">
         <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-zinc-500 font-bold tracking-widest uppercase text-xs">Accessing Network...</p>
+        <p className="text-zinc-500 font-bold tracking-widest uppercase text-xs">Accessing Raven Network...</p>
       </div>
     );
   }
@@ -361,20 +342,14 @@ const App: React.FC = () => {
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-2 flex items-center gap-4 px-6 focus-within:border-indigo-500/50 transition-all">
             <label className="text-zinc-600 hover:text-white cursor-pointer transition-colors">
               <PlusIcon />
-              <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'chat')} />
+              <input type="file" className="hidden" accept="image/*" onChange={handleChatImageUpload} />
             </label>
             <input 
-              ref={chatInputRef}
               onKeyDown={(e) => { if (e.key === 'Enter') { sendMessage(e.currentTarget.value); e.currentTarget.value = ''; } }}
               placeholder={`Transmit to ${title}...`}
               className="flex-1 bg-transparent py-4 text-sm focus:outline-none placeholder-zinc-700" 
             />
-            <button 
-              onClick={() => { if (chatInputRef.current) { sendMessage(chatInputRef.current.value); chatInputRef.current.value = ''; } }}
-              className="text-indigo-500 hover:scale-110 transition-transform"
-            >
-              <SendIcon />
-            </button>
+            <button className="text-indigo-500 hover:scale-110 transition-transform"><SendIcon /></button>
           </div>
         </div>
       </div>
@@ -382,14 +357,15 @@ const App: React.FC = () => {
       {isMembersVisible && type === 'house' && activeHouse && (
         <aside className="w-80 bg-zinc-950 border-l border-zinc-900 overflow-y-auto hidden lg:flex flex-col animate-in no-scrollbar">
           <div className="p-8 border-b border-zinc-900">
-             <h3 className="text-[10px] font-black uppercase text-zinc-600 tracking-[0.3em] mb-4">Domain Records</h3>
+             <h3 className="text-[10px] font-black uppercase text-zinc-600 tracking-[0.3em] mb-4">Records</h3>
              <div className="flex items-center justify-between text-xs font-bold text-zinc-500">
                <span>Signal: <span className="text-emerald-500 uppercase">Online</span></span>
                <span>{activeHouse.membersCount} Operatives</span>
              </div>
           </div>
           <div className="p-6 space-y-4">
-             <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest text-center py-10 opacity-30">Active Scan Active</p>
+             {/* List members here from subcollection in production */}
+             <p className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">Active Scan Active</p>
           </div>
         </aside>
       )}
@@ -397,7 +373,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen bg-[#050505] text-white overflow-hidden">
+    <div className="flex h-screen bg-[#050505] text-white">
       {/* SIDE NAV */}
       {view !== 'landing' && view !== 'auth' && view !== 'setup' && (
         <nav className="w-20 md:w-24 bg-zinc-950 border-r border-zinc-900 flex flex-col items-center py-6 gap-6">
@@ -429,7 +405,7 @@ const App: React.FC = () => {
       {/* MAIN VIEW */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
         {view === 'landing' && (
-          <div className="h-screen flex flex-col items-center justify-center p-6 text-center animate-in overflow-y-auto">
+          <div className="h-screen flex flex-col items-center justify-center p-6 text-center animate-in">
             <RavenCrestIcon className="w-32 h-32 mb-8" />
             <h1 className="text-7xl font-black tracking-tighter mb-4">RAVEN</h1>
             <p className="text-zinc-400 text-xl max-w-lg mb-12 uppercase tracking-widest font-bold">Secure Private Communities</p>
@@ -448,8 +424,8 @@ const App: React.FC = () => {
                </div>
             </div>
             <div className="flex gap-4">
-              <button onClick={() => { setAuthMode('signup'); setView('auth'); }} className="px-12 py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold transition-all shadow-xl shadow-indigo-500/20 uppercase tracking-widest">Get Started</button>
-              <button onClick={() => { setAuthMode('login'); setView('auth'); }} className="px-12 py-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-2xl font-bold transition-all uppercase tracking-widest">Login</button>
+              <button onClick={() => setView('auth')} className="px-12 py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold transition-all shadow-xl shadow-indigo-500/20 uppercase tracking-widest">Get Started</button>
+              <button onClick={() => setView('auth')} className="px-12 py-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-2xl font-bold transition-all uppercase tracking-widest">Login</button>
             </div>
           </div>
         )}
@@ -477,8 +453,8 @@ const App: React.FC = () => {
                 <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold uppercase tracking-widest">
                   {authMode === 'login' ? 'Authenticate' : 'Register Operative'}
                 </button>
-                <div className="text-center text-xs text-zinc-500 font-bold uppercase cursor-pointer py-2" onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>
-                  {authMode === 'login' ? "New operative? Register Link" : "Already verified? Login Link"}
+                <div className="text-center text-xs text-zinc-500 font-bold uppercase cursor-pointer" onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>
+                  {authMode === 'login' ? "New operative? Register link" : "Already verified? Login link"}
                 </div>
                 <div className="relative py-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-800"></div></div><div className="relative flex justify-center text-xs uppercase font-black text-zinc-600 bg-zinc-900 px-4">OR</div></div>
                 <button type="button" onClick={handleGoogleAuth} className="w-full py-4 bg-white text-black rounded-2xl font-bold flex items-center justify-center gap-3 uppercase tracking-widest text-xs">
@@ -493,20 +469,17 @@ const App: React.FC = () => {
           <div className="h-screen flex items-center justify-center p-6 animate-in">
             <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10">
               <h2 className="text-3xl font-black mb-2 text-indigo-400 uppercase tracking-tighter">Identity Record</h2>
-              <p className="text-zinc-500 mb-10 uppercase text-[10px] font-black tracking-widest text-center">Profile initialization required for network entry.</p>
-              <form onSubmit={handleProfileSetup} className="space-y-6">
+              <p className="text-zinc-500 mb-10 uppercase text-[10px] font-black tracking-widest">Profile initialization required for network entry.</p>
+              <form onSubmit={handleProfileUpdate} className="space-y-6">
                 <div className="flex flex-col items-center">
                   <div className="relative mb-6">
-                    <div className="w-32 h-32 rounded-full bg-zinc-800 overflow-hidden border-4 border-zinc-900 shadow-xl relative group">
+                    <div className="w-32 h-32 rounded-full bg-zinc-800 overflow-hidden border-4 border-zinc-900 shadow-xl">
                       {currentUser?.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" alt="" /> : <div className="w-full h-full flex items-center justify-center text-zinc-600"><CameraIcon /></div>}
-                      <label className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
-                        <CameraIcon className="w-8 h-8 text-white" />
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'avatar')} />
-                      </label>
                     </div>
-                    <div className="mt-4 text-center">
-                       <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em]">Identicon Sequence Required</span>
-                    </div>
+                    <label className="absolute bottom-0 right-0 p-2 bg-indigo-600 rounded-full cursor-pointer hover:bg-indigo-700">
+                      <CameraIcon />
+                      <input type="file" className="hidden" accept="image/*" onChange={handleAvatarUpload} />
+                    </label>
                   </div>
                 </div>
                 <input name="displayName" required placeholder="Display Name (e.g. Ghost Protocol)" className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500" />
@@ -549,18 +522,12 @@ const App: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-12 max-w-4xl mx-auto w-full animate-in no-scrollbar">
             <header className="flex justify-between items-center mb-12">
                <h1 className="text-4xl font-black tracking-tighter uppercase">Operative Data</h1>
-               <button onClick={() => setView('edit_profile')} className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:text-indigo-400 transition-all">
-                 <PencilIcon />
-               </button>
+               <button onClick={() => setView('edit_profile')} className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:text-indigo-400 transition-all"><PencilIcon /></button>
             </header>
             <div className="bg-zinc-900 border border-zinc-800 rounded-[3rem] p-12">
                <div className="flex flex-col md:flex-row gap-10 items-center md:items-start">
-                  <div className="w-40 h-40 rounded-full border-4 border-indigo-500/20 overflow-hidden shadow-2xl relative group">
+                  <div className="w-40 h-40 rounded-full border-4 border-indigo-500/20 overflow-hidden shadow-2xl">
                      <img src={currentUser.avatar} className="w-full h-full object-cover" alt="" />
-                     <label className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
-                        <CameraIcon className="w-8 h-8 text-white" />
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'avatar')} />
-                     </label>
                   </div>
                   <div className="flex-1 text-center md:text-left">
                      <div className="flex flex-col md:flex-row items-center gap-4 mb-2">
@@ -568,15 +535,15 @@ const App: React.FC = () => {
                         <PositionTag position={currentUser.position} />
                      </div>
                      <p className="text-indigo-400 font-mono text-sm mb-6 uppercase tracking-widest">ID: {currentUser.commsCode}</p>
-                     <p className="text-zinc-400 leading-relaxed mb-8">{currentUser.bio || "No mission brief established."}</p>
+                     <p className="text-zinc-400 leading-relaxed mb-8">{currentUser.bio || "No mission brief provided."}</p>
                      <div className="grid grid-cols-2 gap-4">
                         <div className="p-4 bg-black/50 rounded-2xl border border-zinc-800">
                            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest block mb-1">Clearance</span>
                            <span className="text-xl font-bold uppercase">LEVEL 4</span>
                         </div>
                         <div className="p-4 bg-black/50 rounded-2xl border border-zinc-800">
-                           <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest block mb-1">Established</span>
-                           <span className="text-sm font-bold uppercase">{new Date(currentUser.createdAt).toLocaleDateString()}</span>
+                           <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest block mb-1">Active Houses</span>
+                           <span className="text-xl font-bold">{currentUser.houseIds.length}</span>
                         </div>
                      </div>
                   </div>
@@ -592,13 +559,13 @@ const App: React.FC = () => {
                <h1 className="text-4xl font-black tracking-tighter uppercase">Edit Record</h1>
             </header>
             <div className="bg-zinc-900 border border-zinc-800 rounded-[3rem] p-12 shadow-2xl">
-              <form onSubmit={handleEditProfile} className="space-y-8">
+              <form onSubmit={handleProfileUpdate} className="space-y-8">
                 <div className="flex flex-col items-center">
                   <div className="relative mb-6">
-                    <img src={currentUser.avatar} className="w-32 h-32 rounded-full object-cover border-4 border-zinc-800 shadow-xl" alt="" />
+                    <img src={currentUser.avatar} className="w-32 h-32 rounded-full object-cover border-4 border-zinc-800" alt="" />
                     <label className="absolute bottom-0 right-0 p-2 bg-indigo-600 rounded-full cursor-pointer hover:bg-indigo-700 shadow-xl">
                       <CameraIcon />
-                      <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'avatar')} />
+                      <input type="file" className="hidden" accept="image/*" onChange={handleAvatarUpload} />
                     </label>
                   </div>
                 </div>
@@ -611,8 +578,8 @@ const App: React.FC = () => {
                    <textarea name="bio" defaultValue={currentUser.bio} className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 h-32 resize-none" />
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setView('profile')} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest transition-all">Abort</button>
-                  <button type="submit" className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/20">Update Data</button>
+                  <button type="button" onClick={() => setView('profile')} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest">Abort</button>
+                  <button type="submit" className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest">Update Data</button>
                 </div>
               </form>
             </div>
@@ -621,7 +588,7 @@ const App: React.FC = () => {
 
         {view === 'moderation' && (
           <div className="flex-1 overflow-y-auto p-12 max-w-4xl mx-auto w-full animate-in no-scrollbar">
-            <h1 className="text-4xl font-black tracking-tighter mb-4 text-indigo-400 uppercase">Intelligence Hub</h1>
+            <h1 className="text-4xl font-black tracking-tighter mb-4 text-indigo-400 uppercase">Intelligence</h1>
             <p className="text-zinc-600 mb-12 uppercase text-[10px] font-black tracking-widest">Real-time Gemini Analysis Enabled</p>
             <AIInsightsPanel selectedCommunity={activeHouse || houses[0]} />
           </div>
@@ -632,13 +599,13 @@ const App: React.FC = () => {
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md px-6">
           <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 animate-in">
-            <h2 className="text-3xl font-black mb-8 uppercase tracking-tighter text-center">Establish House</h2>
+            <h2 className="text-3xl font-black mb-8 uppercase tracking-tighter">Establish House</h2>
             <form onSubmit={createHouse} className="space-y-6">
               <input name="name" required placeholder="House Designation" className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500" />
               <textarea name="description" required placeholder="Strategic Objective" className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 h-32 resize-none" />
               <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest transition-all">Abort</button>
-                <button type="submit" className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/20">Initialize</button>
+                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest">Abort</button>
+                <button type="submit" className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest">Initialize</button>
               </div>
             </form>
           </div>
@@ -647,7 +614,7 @@ const App: React.FC = () => {
 
       {isJoinModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md px-6">
-          <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 animate-in text-center">
+          <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-10 animate-in">
             <h2 className="text-3xl font-black mb-2 uppercase tracking-tighter">Request Entry</h2>
             <p className="text-zinc-500 mb-8 uppercase text-[10px] font-black tracking-widest">Verification of encrypted house frequency required.</p>
             <input 
@@ -656,8 +623,8 @@ const App: React.FC = () => {
               className="w-full bg-black border border-zinc-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 text-center font-mono text-xl uppercase mb-6" 
             />
             <div className="flex gap-4">
-              <button onClick={() => setIsJoinModalOpen(false)} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest transition-all">Abort</button>
-              <button onClick={() => joinHouse((document.getElementById('invite-input') as HTMLInputElement).value)} className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/20">Authenticate</button>
+              <button onClick={() => setIsJoinModalOpen(false)} className="flex-1 py-4 bg-zinc-800 rounded-2xl font-bold uppercase tracking-widest">Abort</button>
+              <button onClick={() => joinHouse((document.getElementById('invite-input') as HTMLInputElement).value)} className="flex-1 py-4 bg-indigo-600 rounded-2xl font-bold uppercase tracking-widest">Authenticate</button>
             </div>
           </div>
         </div>
