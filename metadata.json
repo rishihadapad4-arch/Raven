@@ -1,0 +1,7 @@
+{
+  "name": "RAVEN | Private Communities",
+  "description": "A sophisticated, secure platform for exclusive community management and intelligent group insights, powered by Gemini.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
